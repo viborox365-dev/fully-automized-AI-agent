@@ -10,7 +10,8 @@ export interface ObjectiveRow {
     | "paused"
     | "completed"
     | "failed"
-    | "archived";
+    | "archived"
+    | "escalated";
   priority: number;
   createdBy: string;
   result: string | null;
@@ -29,13 +30,26 @@ export interface RunRow {
     | "verifying"
     | "completed"
     | "failed"
-    | "stopped";
+    | "stopped"
+    | "escalated";
+  agentState:
+    | "idle"
+    | "planning"
+    | "executing"
+    | "observing"
+    | "retrying"
+    | "verifying"
+    | "waiting"
+    | "completed"
+    | "failed"
+    | "escalated";
   plan: string | null;
   result: string | null;
   error: string | null;
   modelId: string;
   stepCount: number;
   maxSteps: number;
+  retryCount: number;
   tokensIn: number;
   tokensOut: number;
   lockedAt: string | null;
@@ -57,7 +71,11 @@ export interface StepRow {
     | "critic"
     | "error"
     | "final"
-    | "note";
+    | "note"
+    | "understand"
+    | "evaluate"
+    | "retry"
+    | "escalate";
   name: string | null;
   input: unknown;
   output: unknown;
@@ -103,6 +121,33 @@ export interface StatusResponse {
     runs: Record<string, number>;
   };
   workspace: { root: string };
+}
+
+export interface TaskRow {
+  id: string;
+  objectiveId: string;
+  title: string;
+  description: string;
+  state:
+    | "idle"
+    | "planning"
+    | "executing"
+    | "observing"
+    | "retrying"
+    | "verifying"
+    | "waiting"
+    | "completed"
+    | "failed"
+    | "escalated";
+  depth: number;
+  retryCount: number;
+  maxRetries: number;
+  runId: string | null;
+  result: string | null;
+  error: string | null;
+  order: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ToolSpecRow {

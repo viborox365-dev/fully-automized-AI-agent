@@ -37,6 +37,27 @@ AVAILABLE TOOLS:
 ${toolsSection}`;
 }
 
+export function understandMessages(params: {
+  objective: Objective;
+  toolsSection: string;
+  memories: string[];
+}): ChatMessage[] {
+  const { objective, toolsSection, memories } = params;
+  const memoryBlock = memories.length
+    ? `\nRelevant long-term memories:\n${memories.map((m) => `- ${m}`).join("\n")}`
+    : "";
+  return [
+    {
+      role: "system",
+      content: `${KAIRA_IDENTITY}\n\nYou are in the UNDERSTANDING phase. Analyze the objective and describe what needs to be done, what tools you will need, and what a successful outcome looks like. Be concise (3–5 sentences). No tool calls yet.`,
+    },
+    {
+      role: "user",
+      content: `Objective from Brandon: ${objective.title}${objective.description ? `\nDetails: ${objective.description}` : ""}${memoryBlock}\n\nAvailable tools:\n${toolsSection}\n\nAnalyze this objective. What does accomplishing it require? What tools will you use? What does success look like? Be concise.`,
+    },
+  ];
+}
+
 export function planningMessages(params: {
   objective: Objective;
   toolsSection: string;
@@ -74,8 +95,13 @@ export function renderTranscript(steps: Step[], perObservationCap = 1500): strin
       case "plan":
         lines.push(`[plan]\n${truncate(String(out.plan ?? ""), 1200)}`);
         break;
+      case "understand":
+        lines.push(`[understand] ${truncate(String(out.analysis ?? ""), 600)}`);
+        break;
+      case "retry":
+        lines.push(`[retry] attempt ${out.attempt ?? "?"}/${out.maxRetries ?? "?"} — ${truncate(String(out.error ?? ""), 300)}`);
+        break;
       case "action":
-        if (out.thought) lines.push(`[thought] ${truncate(String(out.thought), 300)}`);
         lines.push(
           `[action] ${s.name}(${truncate(JSON.stringify(s.input ?? {}), 400)})`,
         );

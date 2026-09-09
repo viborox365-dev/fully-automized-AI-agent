@@ -24,6 +24,7 @@ export const objectiveStatus = pgEnum("objective_status", [
   "completed",
   "failed",
   "archived",
+  "escalated",
 ]);
 
 export const runStatus = pgEnum("run_status", [
@@ -34,6 +35,7 @@ export const runStatus = pgEnum("run_status", [
   "completed",
   "failed",
   "stopped",
+  "escalated",
 ]);
 
 export const stepKind = pgEnum("step_kind", [
@@ -45,6 +47,23 @@ export const stepKind = pgEnum("step_kind", [
   "error",
   "final",
   "note",
+  "understand",
+  "evaluate",
+  "retry",
+  "escalate",
+]);
+
+export const agentState = pgEnum("agent_state", [
+  "idle",
+  "planning",
+  "executing",
+  "observing",
+  "retrying",
+  "verifying",
+  "waiting",
+  "completed",
+  "failed",
+  "escalated",
 ]);
 
 export const memoryKind = pgEnum("memory_kind", [
@@ -92,6 +111,8 @@ export const runs = pgTable(
       .notNull()
       .references(() => objectives.id, { onDelete: "cascade" }),
     status: runStatus("status").notNull().default("queued"),
+    agentState: agentState("agent_state").notNull().default("idle"),
+    retryCount: integer("retry_count").notNull().default(0),
     plan: text("plan"),
     result: text("result"),
     error: text("error"),
@@ -177,6 +198,40 @@ export const kv = pgTable("kv", {
     .defaultNow(),
 });
 
+/**
+ * Decomposed tasks from an objective's plan. Each task tracks its own
+ * agent state and retry count, enabling persistent task-level progress.
+ */
+export const tasks = pgTable(
+  "tasks",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    objectiveId: uuid("objective_id")
+      .notNull()
+      .references(() => objectives.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    description: text("description").notNull().default(""),
+    state: agentState("state").notNull().default("idle"),
+    depth: integer("depth").notNull().default(0),
+    retryCount: integer("retry_count").notNull().default(0),
+    maxRetries: integer("max_retries").notNull().default(3),
+    runId: uuid("run_id").references(() => runs.id, { onDelete: "set null" }),
+    result: text("result"),
+    error: text("error"),
+    order: integer("order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("tasks_objective_idx").on(t.objectiveId),
+    index("tasks_state_idx").on(t.state),
+  ],
+);
+
 /* ---------------------------------- types --------------------------------- */
 
 export type Objective = typeof objectives.$inferSelect;
@@ -187,3 +242,5 @@ export type Step = typeof steps.$inferSelect;
 export type NewStep = typeof steps.$inferInsert;
 export type Memory = typeof memories.$inferSelect;
 export type Message = typeof messages.$inferSelect;
+export type Task = typeof tasks.$inferSelect;
+export type NewTask = typeof tasks.$inferInsert;

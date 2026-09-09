@@ -59,6 +59,8 @@ class ScriptedProvider implements ModelProvider {
         reason:
           "Observations in the transcript confirm the file was written and read back with the expected marker.",
       });
+    } else if (system.includes("UNDERSTANDING phase")) {
+      content = `I need to create a marker file in the workspace, verify it by reading it back, and save the outcome to long-term memory.`;
     } else if (user.includes("Write a concrete, numbered execution plan")) {
       content = [
         `1. Write a marker file ${TOKEN} into selftest/hello.txt with fs_write.`,
@@ -103,7 +105,7 @@ class ScriptedProvider implements ModelProvider {
           final: `Verified the engine end-to-end: created workspace/selftest/hello.txt, read it back successfully via shell (marker ${TOKEN} confirmed), and stored a memory record. Objective complete.`,
         },
       ];
-      const next = envelopes[this.calls - 2];
+      const next = envelopes[this.calls - 3];
       if (!next) {
         throw new Error(`ScriptedProvider exhausted after ${this.calls} calls`);
       }

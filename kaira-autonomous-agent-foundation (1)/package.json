@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit",
     "worker": "tsx src/worker/runner.ts",
     "selftest": "tsx scripts/selftest.ts",
+    "test:kernel": "tsx scripts/test-kernel.ts",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {

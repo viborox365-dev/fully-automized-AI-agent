@@ -5,6 +5,7 @@ import {
   objectives,
   runs,
   steps,
+  tasks,
   type Objective,
   type Run,
   type Step,
@@ -18,6 +19,8 @@ import {
 import { executeTool, toolsPromptSection } from "./tools";
 import { recallMemories } from "./tools/memory";
 import { ensureWorkspace } from "./workspace";
+import { type AgentState, STATE_LABELS } from "./states";
+import { checkSafeguards, SAFEGUARD_LIMITS } from "./safeguards";
 import { parseAgentResponse, parseCriticResponse } from "./parse";
 import {
   PARSE_FEEDBACK,
@@ -25,6 +28,7 @@ import {
   planningMessages,
   reactMessages,
   renderTranscript,
+  understandMessages,
 } from "./prompts";
 
 /**
@@ -40,7 +44,7 @@ import {
 
 export class InfraError extends Error {}
 
-const TERMINAL: Array<Run["status"]> = ["completed", "failed", "stopped"];
+const TERMINAL: Array<Run["status"]> = ["completed", "failed", "stopped", "escalated"];
 export const RUNNABLE: Array<Run["status"]> = [
   "queued",
   "planning",
@@ -113,6 +117,14 @@ async function clearLock(runId: string): Promise<void> {
   await db
     .update(runs)
     .set({ lockedAt: null, lockOwner: null })
+    .where(eq(runs.id, runId));
+}
+
+/** Update the agent's explicit state machine state. */
+async function setAgentState(runId: string, state: AgentState): Promise<void> {
+  await db
+    .update(runs)
+    .set({ agentState: state })
     .where(eq(runs.id, runId));
 }
 
@@ -263,6 +275,24 @@ export async function tick(runId: string, opts?: DriverOptions): Promise<boolean
     await failRun(run, `Step budget exhausted (${run.maxSteps} steps). Re-dispatch with a larger budget or a sharper objective.`);
     return true;
   }
+
+  // Safeguard checks against recent step history
+  const recentStepsDesc = await db
+    .select()
+    .from(steps)
+    .where(eq(steps.runId, runId))
+    .orderBy(desc(steps.seq))
+    .limit(20);
+  const safeguard = checkSafeguards(recentStepsDesc.reverse());
+  if (safeguard.triggered) {
+    if (safeguard.escalate) {
+      await escalateRun(run, safeguard.reason);
+    } else {
+      await failRun(run, safeguard.reason);
+    }
+    return true;
+  }
+
   let stack: ModelStack;
   try {
     stack = await resolveStack(run, opts);
@@ -274,7 +304,7 @@ export async function tick(runId: string, opts?: DriverOptions): Promise<boolean
     throw err;
   }
   run = await getRun(runId);
-  if (!run.plan) return doPlanning(run, stack);
+  if (!run.plan) return doUnderstandAndPlan(run, stack);
   return doReActStep(run, stack);
 }
 
@@ -324,15 +354,40 @@ async function generateOrThrow(
   }
 }
 
-async function doPlanning(run: Run, stack: ModelStack): Promise<boolean> {
+/**
+ * UNDERSTAND → PLAN phase.
+ *
+ * First the model analyzes the objective (understanding), then it produces
+ * a numbered execution plan. The plan is decomposed into persistent tasks.
+ */
+async function doUnderstandAndPlan(run: Run, stack: ModelStack): Promise<boolean> {
   const objective = await getObjective(run.objectiveId);
   const mem = await recallMemories(
     db,
     `${objective.title} ${objective.description}`,
   ).catch(() => []);
+  const toolsSection = toolsPromptSection();
+
+  // ── UNDERSTAND ──────────────────────────────────────────────
+  await setAgentState(run.id, "planning");
+  const understandChat = understandMessages({
+    objective,
+    toolsSection,
+    memories: mem.map((m) => m.content),
+  });
+  const ur = await generateOrThrow(run, stack, understandChat, {
+    temperature: 0.3,
+    maxTokens: 500,
+  });
+  await recordStep(run.id, "understand", {
+    output: { analysis: cap(ur.content, 4000), model: ur.model },
+    latencyMs: ur.latencyMs,
+  });
+
+  // ── PLAN ─────────────────────────────────────────────────────
   const chat = planningMessages({
     objective,
-    toolsSection: toolsPromptSection(),
+    toolsSection,
     memories: mem.map((m) => m.content),
   });
   const r = await generateOrThrow(run, stack, chat, {
@@ -363,14 +418,33 @@ async function doPlanning(run: Run, stack: ModelStack): Promise<boolean> {
     },
     latencyMs: r.latencyMs,
   });
+
+  // ── TASK DECOMPOSITION ───────────────────────────────────────
+  const planLines = plan
+    .split("\n")
+    .filter((l) => /^\s*\d+[.)]/.test(l))
+    .slice(0, SAFEGUARD_LIMITS.MAX_TASKS_PER_OBJECTIVE);
+  for (let i = 0; i < planLines.length; i++) {
+    const title = planLines[i].replace(/^\s*\d+[.)]\s*/, "").trim();
+    if (title) {
+      await db.insert(tasks).values({
+        objectiveId: objective.id,
+        title: cap(title, 500),
+        state: "idle",
+        order: i,
+      });
+    }
+  }
+
   await db
     .update(runs)
     .set({
       plan: cap(plan, 8000),
       status: "running",
+      agentState: "executing",
       modelId: r.model,
-      tokensIn: run.tokensIn + (r.tokensIn ?? 0),
-      tokensOut: run.tokensOut + (r.tokensOut ?? 0),
+      tokensIn: run.tokensIn + (r.tokensIn ?? 0) + (ur.tokensIn ?? 0),
+      tokensOut: run.tokensOut + (r.tokensOut ?? 0) + (ur.tokensOut ?? 0),
       lockedAt: new Date(),
       error: null,
     })
@@ -439,10 +513,12 @@ async function doReActStep(run: Run, stack: ModelStack): Promise<boolean> {
   }
 
   if (parsed.type === "action") {
+    // ── EXECUTE ─────────────────────────────────────────────────
+    await setAgentState(run.id, "executing");
     await recordStep(run.id, "action", {
       name: parsed.tool,
       input: parsed.input as Step["input"],
-      output: { thought: cap(parsed.thought, 500), model: r.model },
+      output: { status: `Executing ${parsed.tool}`, model: r.model },
       latencyMs: r.latencyMs,
     });
     await db
@@ -454,6 +530,9 @@ async function doReActStep(run: Run, stack: ModelStack): Promise<boolean> {
       workspaceRoot: ensureWorkspace(),
       runId: run.id,
     });
+
+    // ── OBSERVE ─────────────────────────────────────────────────
+    await setAgentState(run.id, "observing");
     await recordStep(run.id, "observation", {
       name: parsed.tool,
       output: {
@@ -462,17 +541,51 @@ async function doReActStep(run: Run, stack: ModelStack): Promise<boolean> {
         data: slimData(result.data),
       },
     });
+
+    // ── EVALUATE — decide continue / retry / escalate ────────────
+    if (!result.ok) {
+      const newRetryCount = run.retryCount + 1;
+      if (newRetryCount >= SAFEGUARD_LIMITS.MAX_RETRIES) {
+        await escalateRun(
+          run,
+          `Retry limit (${SAFEGUARD_LIMITS.MAX_RETRIES}) exceeded after consecutive tool failures. Last error: ${cap(result.output, 300)}`,
+        );
+        return true;
+      }
+      await setAgentState(run.id, "retrying");
+      await db
+        .update(runs)
+        .set({ retryCount: newRetryCount })
+        .where(eq(runs.id, run.id));
+      await recordStep(run.id, "retry", {
+        name: parsed.tool,
+        output: {
+          attempt: newRetryCount,
+          maxRetries: SAFEGUARD_LIMITS.MAX_RETRIES,
+          error: cap(result.output, 500),
+        },
+      });
+    } else {
+      // Success — reset retry counter
+      if (run.retryCount > 0) {
+        await db
+          .update(runs)
+          .set({ retryCount: 0 })
+          .where(eq(runs.id, run.id));
+      }
+    }
     return false;
   }
 
-  /* ------------------------- final → verification ------------------------ */
+  /* ── VERIFY ───────────────────────────────────────────────── */
+  await setAgentState(run.id, "verifying");
   await recordStep(run.id, "final", {
-    output: { thought: cap(parsed.thought, 500), final: cap(parsed.final, 4000) },
+    output: { final: cap(parsed.final, 4000) },
     latencyMs: r.latencyMs,
   });
   await db
     .update(runs)
-    .set({ ...tokenUpdate, stepCount: run.stepCount + 1, status: "verifying" })
+    .set({ ...tokenUpdate, stepCount: run.stepCount + 1, status: "verifying", agentState: "verifying" })
     .where(eq(runs.id, run.id));
 
   const afterDesc = await db
@@ -509,6 +622,7 @@ async function doReActStep(run: Run, stack: ModelStack): Promise<boolean> {
     latencyMs: criticResult.latencyMs,
   });
   if (verdict.complete) {
+    await setAgentState(run.id, "completed");
     await completeRun(run, objective, parsed.final);
     return true;
   }
@@ -519,9 +633,10 @@ async function doReActStep(run: Run, stack: ModelStack): Promise<boolean> {
       output: `Completion rejected by verification critic: ${cap(verdict.reason, 500)}. Continue working — address this before finishing.`,
     },
   });
+  await setAgentState(run.id, "executing");
   await db
     .update(runs)
-    .set({ status: "running", lockedAt: new Date() })
+    .set({ status: "running", agentState: "executing", lockedAt: new Date() })
     .where(eq(runs.id, run.id));
   return false;
 }
@@ -534,6 +649,7 @@ async function completeRun(run: Run, objective: Objective, result: string) {
     .update(runs)
     .set({
       status: "completed",
+      agentState: "completed",
       result: cap(result, 8000),
       error: null,
       finishedAt: now,
@@ -545,6 +661,11 @@ async function completeRun(run: Run, objective: Objective, result: string) {
     .update(objectives)
     .set({ status: "completed", result: cap(result, 8000), updatedAt: now })
     .where(eq(objectives.id, objective.id));
+  // Mark all tasks as completed
+  await db
+    .update(tasks)
+    .set({ state: "completed", result: cap(result, 2000), updatedAt: now })
+    .where(eq(tasks.objectiveId, objective.id));
   await db.insert(messages).values({
     role: "kaira",
     content: `Objective completed — "${objective.title}"\n\n${cap(result, 1200)}`,
@@ -558,6 +679,7 @@ async function failRun(run: Run, message: string) {
     .update(runs)
     .set({
       status: "failed",
+      agentState: "failed",
       error: cap(message, 2000),
       finishedAt: now,
       lockedAt: null,
@@ -569,9 +691,60 @@ async function failRun(run: Run, message: string) {
     .update(objectives)
     .set({ status: "failed", updatedAt: now })
     .where(eq(objectives.id, objective.id));
+  // Mark remaining tasks as failed
+  await db
+    .update(tasks)
+    .set({ state: "failed", error: cap(message, 2000), updatedAt: now })
+    .where(
+      and(
+        eq(tasks.objectiveId, objective.id),
+        sql`${tasks.state} IN ('idle', 'planning', 'executing', 'observing', 'retrying', 'verifying', 'waiting')`,
+      ),
+    );
   await db.insert(messages).values({
     role: "kaira",
     content: `Objective failed — "${objective.title}"\n\n${cap(message, 1200)}`,
+    objectiveId: objective.id,
+  });
+}
+
+/**
+ * Escalation — the agent exhausted its retry budget or hit a safeguard
+ * that warrants human attention. Different from failure: the agent tried
+ * but could not succeed, and is asking for help rather than reporting a
+ * hard error.
+ */
+async function escalateRun(run: Run, message: string) {
+  const now = new Date();
+  await db
+    .update(runs)
+    .set({
+      status: "escalated",
+      agentState: "escalated",
+      error: cap(message, 2000),
+      finishedAt: now,
+      lockedAt: null,
+      lockOwner: null,
+    })
+    .where(eq(runs.id, run.id));
+  const objective = await getObjective(run.objectiveId);
+  await db
+    .update(objectives)
+    .set({ status: "escalated", updatedAt: now })
+    .where(eq(objectives.id, objective.id));
+  // Mark remaining tasks as escalated
+  await db
+    .update(tasks)
+    .set({ state: "escalated", error: cap(message, 2000), updatedAt: now })
+    .where(
+      and(
+        eq(tasks.objectiveId, objective.id),
+        sql`${tasks.state} IN ('idle', 'planning', 'executing', 'observing', 'retrying', 'verifying', 'waiting')`,
+      ),
+    );
+  await db.insert(messages).values({
+    role: "kaira",
+    content: `Objective escalated — "${objective.title}"\n\n${cap(message, 1200)}`,
     objectiveId: objective.id,
   });
 }
