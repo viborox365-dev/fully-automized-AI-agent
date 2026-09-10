@@ -10,6 +10,7 @@
     "worker": "tsx src/worker/runner.ts",
     "selftest": "tsx scripts/selftest.ts",
     "test:kernel": "tsx scripts/test-kernel.ts",
+    "test:phase2": "tsx scripts/test-phase2.ts",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {

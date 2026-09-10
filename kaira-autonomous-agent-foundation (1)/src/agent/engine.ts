@@ -57,7 +57,7 @@ const DEFAULT_MAX_STEPS = Number(process.env.KAIRA_MAX_STEPS ?? 20);
 
 /* ------------------------------ small helpers ----------------------------- */
 
-function cap(s: string, n: number): string {
+export function cap(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, n)}…` : s;
 }
 
@@ -71,19 +71,19 @@ function slimData(data: unknown): unknown {
   }
 }
 
-async function getRun(runId: string): Promise<Run> {
+export async function getRun(runId: string): Promise<Run> {
   const [run] = await db.select().from(runs).where(eq(runs.id, runId));
   if (!run) throw new Error(`Run not found: ${runId}`);
   return run;
 }
 
-async function getObjective(id: string): Promise<Objective> {
+export async function getObjective(id: string): Promise<Objective> {
   const [row] = await db.select().from(objectives).where(eq(objectives.id, id));
   if (!row) throw new Error(`Objective not found: ${id}`);
   return row;
 }
 
-async function recordStep(
+export async function recordStep(
   runId: string,
   kind: Step["kind"],
   fields: {
@@ -121,7 +121,7 @@ async function clearLock(runId: string): Promise<void> {
 }
 
 /** Update the agent's explicit state machine state. */
-async function setAgentState(runId: string, state: AgentState): Promise<void> {
+export async function setAgentState(runId: string, state: AgentState): Promise<void> {
   await db
     .update(runs)
     .set({ agentState: state })
@@ -643,7 +643,7 @@ async function doReActStep(run: Run, stack: ModelStack): Promise<boolean> {
 
 /* ------------------------------- transitions ------------------------------ */
 
-async function completeRun(run: Run, objective: Objective, result: string) {
+export async function completeRun(run: Run, objective: Objective, result: string) {
   const now = new Date();
   await db
     .update(runs)
@@ -673,7 +673,7 @@ async function completeRun(run: Run, objective: Objective, result: string) {
   });
 }
 
-async function failRun(run: Run, message: string) {
+export async function failRun(run: Run, message: string) {
   const now = new Date();
   await db
     .update(runs)
@@ -714,7 +714,7 @@ async function failRun(run: Run, message: string) {
  * but could not succeed, and is asking for help rather than reporting a
  * hard error.
  */
-async function escalateRun(run: Run, message: string) {
+export async function escalateRun(run: Run, message: string) {
   const now = new Date();
   await db
     .update(runs)

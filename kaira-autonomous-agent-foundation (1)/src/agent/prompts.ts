@@ -58,6 +58,167 @@ export function understandMessages(params: {
   ];
 }
 
+/**
+ * Phase 2: Structured planning prompt.
+ * Asks the reasoning model to produce a JSON plan with tasks, tools,
+ * inputs, dependencies, and verification criteria — not natural language.
+ */
+export function structuredPlanningMessages(params: {
+  objective: Objective;
+  toolsSection: string;
+  memories: string[];
+}): ChatMessage[] {
+  const { objective, toolsSection, memories } = params;
+  const memoryBlock = memories.length
+    ? `\nRelevant long-term memories:\n${memories.map((m) => `- ${m}`).join("\n")}`
+    : "";
+  return [
+    {
+      role: "system",
+      content: `${KAIRA_IDENTITY}
+
+You are in the PLANNING phase. Produce a structured execution plan as JSON.
+
+Given an objective, determine:
+- What tasks are required to accomplish it
+- What tool to use for each task
+- What input to pass to each tool (write actual file contents, actual commands)
+- Task dependencies (which tasks must complete before others, using 0-based indices)
+- How to verify each task succeeded
+
+Verification criteria types:
+- {"type":"file_exists","path":"relative/path"} — verify a file exists in the workspace
+- {"type":"output_contains","expected":"text"} — verify the PREVIOUS task's output contains text
+- {"type":"exit_code_zero"} — verify the PREVIOUS task's command exited successfully
+- {"type":"command_succeeds","command":"cmd"} — run a command and verify it succeeds
+
+Rules:
+1. Write actual, executable content — not placeholders.
+2. Include a verification criterion for every task.
+3. Tasks should be ordered by dependency.
+4. Keep plans focused (2–6 tasks).
+
+AVAILABLE TOOLS:
+${toolsSection}
+
+Respond with ONLY a JSON object, no prose, no code fences:
+{
+  "understanding": "brief analysis of the objective",
+  "tasks": [
+    {
+      "description": "what this task does",
+      "tool": "tool name",
+      "input": { ... actual tool arguments ... },
+      "depends_on": [0],
+      "verify": { "type": "file_exists", "path": "..." }
+    }
+  ]
+}`,
+    },
+    {
+      role: "user",
+      content: `Objective from Brandon: ${objective.title}${objective.description ? `\nDetails: ${objective.description}` : ""}${memoryBlock}
+
+Produce a structured execution plan as JSON.`,
+    },
+  ];
+}
+
+/**
+ * Phase 2: Diagnosis prompt.
+ * Asks the reasoning model to diagnose a failure and determine if recovery is possible.
+ */
+export function diagnosisMessages(params: {
+  objective: Objective;
+  taskDescription: string;
+  tool: string;
+  input: unknown;
+  error: string;
+  transcript: string;
+}): ChatMessage[] {
+  const { objective, taskDescription, tool, input, error, transcript } = params;
+  return [
+    {
+      role: "system",
+      content: `${KAIRA_IDENTITY}
+
+You are in the DIAGNOSING phase. A task failed during execution. Analyze the error and determine if recovery is possible.
+
+Respond with ONLY a JSON object, no prose, no code fences:
+{
+  "diagnosis": "what went wrong and why",
+  "recoverable": true
+}
+
+If recovery is NOT possible, set "recoverable" to false. Do not include a repair action — that will be generated separately.`,
+    },
+    {
+      role: "user",
+      content: `Objective: ${objective.title}
+
+Failed task: ${taskDescription}
+Tool used: ${tool}
+Input: ${JSON.stringify(input)}
+
+Error output:
+${error}
+
+Execution transcript:
+${transcript}
+
+Diagnose the failure. Is recovery possible? Respond with JSON only.`,
+    },
+  ];
+}
+
+/**
+ * Phase 2: Repair prompt.
+ * Asks the coding model to generate a repair action for a diagnosed failure.
+ */
+export function repairMessages(params: {
+  objective: Objective;
+  taskDescription: string;
+  tool: string;
+  input: unknown;
+  diagnosis: string;
+  error: string;
+  toolsSection: string;
+}): ChatMessage[] {
+  const { objective, taskDescription, tool, input, diagnosis, error, toolsSection } = params;
+  return [
+    {
+      role: "system",
+      content: `${KAIRA_IDENTITY}
+
+You are in the REPAIRING phase. A task failed and was diagnosed as recoverable. Generate a repair action that will fix the issue.
+
+AVAILABLE TOOLS:
+${toolsSection}
+
+Respond with ONLY a JSON object, no prose, no code fences:
+{
+  "tool": "tool name to use for the repair",
+  "input": { ... actual tool arguments to fix the issue ... }
+}
+
+The repair should directly address the diagnosed problem. For code errors, rewrite the file with corrected content.`,
+    },
+    {
+      role: "user",
+      content: `Objective: ${objective.title}
+
+Failed task: ${taskDescription}
+Original tool: ${tool}
+Original input: ${JSON.stringify(input)}
+
+Error: ${error}
+Diagnosis: ${diagnosis}
+
+Generate a repair action. Respond with JSON only.`,
+    },
+  ];
+}
+
 export function planningMessages(params: {
   objective: Objective;
   toolsSection: string;
@@ -100,6 +261,18 @@ export function renderTranscript(steps: Step[], perObservationCap = 1500): strin
         break;
       case "retry":
         lines.push(`[retry] attempt ${out.attempt ?? "?"}/${out.maxRetries ?? "?"} — ${truncate(String(out.error ?? ""), 300)}`);
+        break;
+      case "diagnose":
+        lines.push(`[diagnose] recoverable=${out.recoverable} — ${truncate(String(out.diagnosis ?? ""), 400)}`);
+        break;
+      case "repair":
+        lines.push(`[repair] ${out.tool}(${truncate(JSON.stringify(out.input ?? {}), 300)})`);
+        break;
+      case "verify":
+        lines.push(`[verify] ${out.passed === true ? "PASS" : "FAIL"} — ${truncate(String(out.detail ?? ""), 400)}`);
+        break;
+      case "transition":
+        lines.push(`[transition] ${out.from ?? "?"}→${out.to ?? "?"} — ${truncate(String(out.reason ?? ""), 200)}`);
         break;
       case "action":
         lines.push(

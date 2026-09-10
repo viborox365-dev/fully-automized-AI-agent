@@ -344,7 +344,7 @@ async function testStateMachine() {
   for (const s of ["idle", "planning", "executing"] as AgentState[]) {
     check(`non-terminal: ${s}`, !isTerminalState(s));
   }
-  check("all 10 states defined", AgentStates.length === 10);
+  check("all 12 states defined", AgentStates.length === 12);
 }
 
 async function testSafeguards() {

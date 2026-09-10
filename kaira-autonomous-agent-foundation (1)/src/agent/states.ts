@@ -1,21 +1,23 @@
 /**
- * Kaira Agent Kernel — State Machine
+ * Kaira Agent Kernel — State Machine (Phase 2)
  *
  * Explicit state tracking for the agent execution loop. Every transition
  * is validated against the allowed transition table, so the agent can never
  * reach an invalid state.
  *
  * States:
- *   IDLE       — waiting for an objective
- *   PLANNING   — analyzing objective and producing a plan
- *   EXECUTING  — selecting and running a tool action
- *   OBSERVING  — recording and interpreting tool results
- *   RETRYING   — adjusting approach after a failure
- *   VERIFYING  — critic verification of proposed completion
- *   WAITING    — paused for external resource (model, network)
- *   COMPLETED  — objective accomplished and verified
- *   FAILED     — unrecoverable error
- *   ESCALATED  — retries exhausted, needs human intervention
+ *   IDLE        — waiting for an objective
+ *   PLANNING    — analyzing objective and producing a structured plan
+ *   EXECUTING   — selecting and running a tool action
+ *   OBSERVING   — recording and interpreting tool results
+ *   DIAGNOSING  — analyzing a failure to determine recovery options
+ *   REPAIRING   — generating and applying a repair action
+ *   RETRYING    — re-executing a failed task after repair
+ *   VERIFYING   — verifying that the actual outcome matches the objective
+ *   WAITING     — paused for external resource (model, network)
+ *   COMPLETED   — objective accomplished and verified
+ *   FAILED      — unrecoverable error
+ *   ESCALATED   — retries exhausted, needs human intervention
  */
 
 export const AgentStates = [
@@ -23,6 +25,8 @@ export const AgentStates = [
   "planning",
   "executing",
   "observing",
+  "diagnosing",
+  "repairing",
   "retrying",
   "verifying",
   "waiting",
@@ -44,9 +48,11 @@ export const STATE_TRANSITIONS: Record<AgentState, AgentState[]> = {
   idle: ["planning"],
   planning: ["executing", "waiting", "failed", "escalated"],
   executing: ["observing", "verifying", "waiting", "failed", "escalated"],
-  observing: ["executing", "retrying", "verifying", "failed", "escalated"],
-  retrying: ["executing", "escalated", "failed"],
-  verifying: ["completed", "executing", "failed", "escalated"],
+  observing: ["executing", "retrying", "diagnosing", "verifying", "failed", "escalated"],
+  diagnosing: ["repairing", "retrying", "failed", "escalated"],
+  repairing: ["retrying", "executing", "failed", "escalated"],
+  retrying: ["executing", "observing", "escalated", "failed"],
+  verifying: ["completed", "executing", "diagnosing", "failed", "escalated"],
   waiting: ["executing", "planning", "failed", "escalated"],
   completed: [],
   failed: [],
@@ -69,6 +75,8 @@ export const STATE_LABELS: Record<AgentState, string> = {
   planning: "Planning",
   executing: "Executing",
   observing: "Observing",
+  diagnosing: "Diagnosing",
+  repairing: "Repairing",
   retrying: "Retrying",
   verifying: "Verifying",
   waiting: "Waiting",

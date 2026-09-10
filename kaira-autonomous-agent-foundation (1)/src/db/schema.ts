@@ -51,6 +51,10 @@ export const stepKind = pgEnum("step_kind", [
   "evaluate",
   "retry",
   "escalate",
+  "diagnose",
+  "repair",
+  "verify",
+  "transition",
 ]);
 
 export const agentState = pgEnum("agent_state", [
@@ -58,6 +62,8 @@ export const agentState = pgEnum("agent_state", [
   "planning",
   "executing",
   "observing",
+  "diagnosing",
+  "repairing",
   "retrying",
   "verifying",
   "waiting",
@@ -92,6 +98,10 @@ export const objectives = pgTable(
     priority: integer("priority").notNull().default(0),
     createdBy: text("created_by").notNull().default("brandon"),
     result: text("result"),
+    // Phase 2: objective tracking
+    currentTaskId: uuid("current_task_id"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    verificationResult: jsonb("verification_result"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -219,6 +229,15 @@ export const tasks = pgTable(
     result: text("result"),
     error: text("error"),
     order: integer("order").notNull().default(0),
+    // Phase 2: structured task fields
+    dependencies: jsonb("dependencies").notNull().default([]),
+    priority: integer("priority").notNull().default(0),
+    toolName: text("tool_name"),
+    toolInput: jsonb("tool_input"),
+    actionResult: jsonb("action_result"),
+    errorInfo: jsonb("error_info"),
+    verificationStatus: text("verification_status").notNull().default("pending"),
+    verificationDetail: jsonb("verification_detail"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

@@ -15,6 +15,9 @@ export interface ObjectiveRow {
   priority: number;
   createdBy: string;
   result: string | null;
+  currentTaskId: string | null;
+  attemptCount: number;
+  verificationResult: unknown;
   createdAt: string;
   updatedAt: string;
   latestRun?: RunRow | null;
@@ -37,6 +40,8 @@ export interface RunRow {
     | "planning"
     | "executing"
     | "observing"
+    | "diagnosing"
+    | "repairing"
     | "retrying"
     | "verifying"
     | "waiting"
@@ -75,7 +80,11 @@ export interface StepRow {
     | "understand"
     | "evaluate"
     | "retry"
-    | "escalate";
+    | "escalate"
+    | "diagnose"
+    | "repair"
+    | "verify"
+    | "transition";
   name: string | null;
   input: unknown;
   output: unknown;
@@ -133,6 +142,8 @@ export interface TaskRow {
     | "planning"
     | "executing"
     | "observing"
+    | "diagnosing"
+    | "repairing"
     | "retrying"
     | "verifying"
     | "waiting"
@@ -146,6 +157,14 @@ export interface TaskRow {
   result: string | null;
   error: string | null;
   order: number;
+  dependencies: number[];
+  priority: number;
+  toolName: string | null;
+  toolInput: unknown;
+  actionResult: unknown;
+  errorInfo: unknown;
+  verificationStatus: string;
+  verificationDetail: unknown;
   createdAt: string;
   updatedAt: string;
 }
