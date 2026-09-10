@@ -70,22 +70,45 @@ export class OllamaProvider implements ModelProvider {
       );
     }
     const started = Date.now();
-    const res = await fetch(this.url("/api/chat"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        messages,
-        stream: false,
-        options: {
-          temperature: opts.temperature ?? 0.2,
-          num_predict: opts.maxTokens ?? 2048,
-        },
-      }),
-      signal: AbortSignal.timeout(opts.timeoutMs ?? 180_000),
-    });
+    const timeoutMs = opts.timeoutMs ?? 180_000;
+
+    let res: Response;
+    try {
+      res = await fetch(this.url("/api/chat"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model,
+          messages,
+          stream: false,
+          options: {
+            temperature: opts.temperature ?? 0.2,
+            num_predict: opts.maxTokens ?? 2048,
+          },
+        }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (err) {
+      // Distinguish timeout from connection refusal
+      if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
+        throw new Error(
+          `Ollama request timed out after ${timeoutMs}ms for model "${model}". The model may still be loading — try again or increase KAIRA_MODEL_TIMEOUT_MS.`,
+        );
+      }
+      throw new Error(
+        `Cannot reach Ollama at ${this.baseUrl} — is it running? Start it with "ollama serve" (${errMessage(err)})`,
+      );
+    }
+
     if (!res.ok) {
       const body = await res.text().catch(() => "");
+      const lower = body.toLowerCase();
+      // Model-not-found: Ollama returns 404 with "model not found" in the body
+      if (res.status === 404 || (lower.includes("model") && lower.includes("not found"))) {
+        throw new Error(
+          `Model "${model}" not found at ${this.baseUrl}. Pull it with: ollama pull ${model}`,
+        );
+      }
       throw new Error(
         `Ollama generate failed (HTTP ${res.status}): ${body.slice(0, 300)}`,
       );
