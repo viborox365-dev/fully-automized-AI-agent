@@ -1,5 +1,63 @@
 import type { ChatMessage } from "./model/types";
 import type { Objective, Step } from "@/db/schema";
+import { ensureWorkspace } from "./workspace";
+import fs from "node:fs";
+import path from "node:path";
+
+/**
+ * Build a bounded workspace context string for the planning prompt.
+ * Lists top-level files and includes contents of small text files.
+ */
+export function workspaceContext(maxFiles = 20, maxFileContent = 2000): string {
+  let root: string;
+  try {
+    root = ensureWorkspace();
+  } catch {
+    return "(workspace not available)";
+  }
+  const lines: string[] = ["Workspace contents:"];
+  let count = 0;
+  const walk = (dir: string, depth: number, prefix: string) => {
+    if (count >= maxFiles || depth > 3) return;
+    let items;
+    try {
+      items = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const item of items) {
+      if (count >= maxFiles) break;
+      if (["node_modules", ".git", ".next", "dist", "build", "__pycache__"].includes(item.name)) continue;
+      const full = path.join(dir, item.name);
+      const rel = path.relative(root, full);
+      if (item.isDirectory()) {
+        lines.push(`${prefix}dir  ${rel}/`);
+        count++;
+        walk(full, depth + 1, prefix + "  ");
+      } else {
+        const stat = fs.statSync(full);
+        lines.push(`${prefix}file ${rel} (${stat.size} bytes)`);
+        count++;
+        // Include content of small text files
+        if (stat.size < maxFileContent && depth <= 2) {
+          const ext = path.extname(item.name).toLowerCase();
+          if ([".py", ".js", ".ts", ".json", ".txt", ".md", ".yaml", ".yml", ".toml", ".go", ".rs"].includes(ext)) {
+            try {
+              const content = fs.readFileSync(full, "utf8");
+              lines.push(`${prefix}  --- content ---`);
+              lines.push(content.slice(0, maxFileContent));
+              if (content.length > maxFileContent) lines.push("...(truncated)");
+            } catch {
+              // skip unreadable files
+            }
+          }
+        }
+      }
+    }
+  };
+  walk(root, 0, "");
+  return lines.length > 1 ? lines.join("\n") : "(workspace is empty)";
+}
 
 /**
  * Prompt architecture for Kaira.
@@ -72,6 +130,7 @@ export function structuredPlanningMessages(params: {
   const memoryBlock = memories.length
     ? `\nRelevant long-term memories:\n${memories.map((m) => `- ${m}`).join("\n")}`
     : "";
+  const wsContext = workspaceContext();
   return [
     {
       role: "system",
@@ -88,6 +147,7 @@ Given an objective, determine:
 
 Verification criteria types:
 - {"type":"file_exists","path":"relative/path"} — verify a file exists in the workspace
+- {"type":"file_contains","path":"relative/path","expected":"text"} — verify a file contains specific text
 - {"type":"output_contains","expected":"text"} — verify the PREVIOUS task's output contains text
 - {"type":"exit_code_zero"} — verify the PREVIOUS task's command exited successfully
 - {"type":"command_succeeds","command":"cmd"} — run a command and verify it succeeds
@@ -118,6 +178,8 @@ Respond with ONLY a JSON object, no prose, no code fences:
     {
       role: "user",
       content: `Objective from Brandon: ${objective.title}${objective.description ? `\nDetails: ${objective.description}` : ""}${memoryBlock}
+
+${wsContext}
 
 Produce a structured execution plan as JSON.`,
     },

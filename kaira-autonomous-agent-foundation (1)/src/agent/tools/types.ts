@@ -12,6 +12,10 @@ export interface ToolContext {
   workspaceRoot: string;
   /** Run that triggered the call, if any (null for tool-bench calls). */
   runId: string | null;
+  /** Objective that triggered the call (for change tracking). */
+  objectiveId?: string | null;
+  /** Task that triggered the call (for change tracking). */
+  taskId?: string | null;
 }
 
 export interface ToolResult {

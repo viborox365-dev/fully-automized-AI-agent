@@ -4,6 +4,7 @@ import { fsList, fsRead, fsSearch, fsWrite } from "./fs";
 import { shellExec } from "./shell";
 import { httpFetch } from "./http";
 import { memorySave, memorySearch } from "./memory";
+import { fsDelete, fsMkdir, fsExists, fsTree, detectTooling } from "./eng";
 
 /**
  * Tool registry — the single place capabilities are added to Kaira.
@@ -21,6 +22,11 @@ register(fsWrite);
 register(fsRead);
 register(fsList);
 register(fsSearch);
+register(fsDelete);
+register(fsMkdir);
+register(fsExists);
+register(fsTree);
+register(detectTooling);
 register(shellExec);
 register(httpFetch);
 register(memorySave);

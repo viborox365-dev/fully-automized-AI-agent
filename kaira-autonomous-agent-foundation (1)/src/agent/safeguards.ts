@@ -23,6 +23,25 @@ export const SAFEGUARD_LIMITS = {
   REPEATED_FAILURE_THRESHOLD: 3,
 } as const;
 
+/**
+ * Phase 3: Engineering-specific safeguards.
+ * These protect the workspace from accidental damage.
+ */
+export const ENGINEERING_LIMITS = {
+  /** Max file size for read/write operations (1 MB default). */
+  MAX_FILE_SIZE: Number(process.env.KAIRA_MAX_FILE_SIZE ?? 1_048_576),
+  /** Max content size for a single write/modify operation (512 KB default). */
+  MAX_CHANGE_SIZE: Number(process.env.KAIRA_MAX_CHANGE_SIZE ?? 512_000),
+  /** Max command output size (20 KB, already enforced in shell_exec). */
+  MAX_OUTPUT_SIZE: 20_000,
+  /** Whether file deletion is allowed (set KAIRA_ALLOW_DELETE=false to disable). */
+  ALLOW_DELETE: process.env.KAIRA_ALLOW_DELETE !== "false",
+  /** Recursive directory deletion is NEVER allowed by default. */
+  ALLOW_RECURSIVE_DELETE: false,
+  /** Max command execution timeout (ms). */
+  MAX_COMMAND_TIMEOUT: 120_000,
+} as const;
+
 export interface SafeguardResult {
   triggered: boolean;
   escalate: boolean;

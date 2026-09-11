@@ -49,6 +49,9 @@ export async function verifyTask(
     case "command_succeeds":
       return verifyCommandSucceeds(criteria.command ?? "");
 
+    case "file_contains":
+      return verifyFileContains(criteria.path ?? "", criteria.expected ?? "");
+
     default:
       return {
         passed: false,
@@ -103,6 +106,31 @@ function verifyExitCodeZero(output: string): VerificationResult {
       : `Command did not exit cleanly (exit=${exitCode ?? "unknown"})`,
     data: { exitCode },
   };
+}
+
+/** Check that a file exists and contains the expected text. */
+function verifyFileContains(relPath: string, expected: string): VerificationResult {
+  ensureWorkspace();
+  try {
+    const abs = resolveInWorkspace(relPath);
+    if (!fs.existsSync(abs)) {
+      return { passed: false, detail: `File not found: ${relPath}` };
+    }
+    const content = fs.readFileSync(abs, "utf8");
+    const contains = content.includes(expected);
+    return {
+      passed: contains,
+      detail: contains
+        ? `File ${relPath} contains "${expected}"`
+        : `File ${relPath} does not contain "${expected}". Content: ${content.slice(0, 300)}`,
+      data: { path: relPath, expected, found: contains },
+    };
+  } catch (err) {
+    return {
+      passed: false,
+      detail: `File read error: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
 }
 
 /** Run a verification command and check that it succeeds. */

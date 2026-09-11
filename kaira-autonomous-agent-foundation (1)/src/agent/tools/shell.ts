@@ -84,18 +84,35 @@ export const shellExec = {
           const combined = `${stdout}${stderr ? (stdout ? "\n" : "") + stderr : ""}`;
           const truncated = combined.length > MAX_OUTPUT;
           const body = truncated ? combined.slice(0, MAX_OUTPUT) : combined;
-          const meta = `exit=${error ? (error as { code?: number | string }).code ?? "ERR" : 0} · ${Date.now() - started}ms${truncated ? " · output truncated" : ""}`;
+          // Determine actual exit code
+          let exitCode = 0;
+          if (error) {
+            if ((error as { killed?: boolean }).killed) {
+              exitCode = -1; // timed out
+            } else if (typeof (error as { code?: number | string }).code === "number") {
+              exitCode = (error as { code: number }).code;
+            } else {
+              exitCode = 1;
+            }
+          }
+          const meta = `exit=${exitCode} · ${Date.now() - started}ms${truncated ? " · output truncated" : ""}`;
           if (error && !stdout && !stderr) {
             resolve({
               ok: false,
               output: `Command failed to run (${meta}): ${error.message.slice(0, 300)}`,
+              data: { exitCode, durationMs: Date.now() - started, stdout: "", stderr: error.message.slice(0, 500) },
             });
             return;
           }
           resolve({
             ok: !error,
             output: `$ ${input.command}\n${meta}\n${body}`.trim(),
-            data: { exitCode: error ? 1 : 0, durationMs: Date.now() - started },
+            data: {
+              exitCode,
+              durationMs: Date.now() - started,
+              stdout: stdout.slice(0, 10_000),
+              stderr: stderr.slice(0, 10_000),
+            },
           });
         },
       );

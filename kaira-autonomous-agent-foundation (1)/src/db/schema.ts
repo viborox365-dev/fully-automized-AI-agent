@@ -251,6 +251,37 @@ export const tasks = pgTable(
   ],
 );
 
+/**
+ * Phase 3: Engineering change tracking.
+ * Every file modification, deletion, or directory creation is recorded
+ * here for auditability. Before/after content is captured where practical.
+ */
+export const changes = pgTable(
+  "changes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    objectiveId: uuid("objective_id").references(() => objectives.id, {
+      onDelete: "cascade",
+    }),
+    runId: uuid("run_id").references(() => runs.id, { onDelete: "set null" }),
+    taskId: uuid("task_id").references(() => tasks.id, { onDelete: "set null" }),
+    operation: text("operation").notNull(),
+    path: text("path").notNull(),
+    beforeContent: text("before_content"),
+    afterContent: text("after_content"),
+    model: text("model"),
+    commandOutput: text("command_output"),
+    repairAttempt: integer("repair_attempt").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("changes_objective_idx").on(t.objectiveId),
+    index("changes_run_idx").on(t.runId),
+  ],
+);
+
 /* ---------------------------------- types --------------------------------- */
 
 export type Objective = typeof objectives.$inferSelect;
@@ -263,3 +294,5 @@ export type Memory = typeof memories.$inferSelect;
 export type Message = typeof messages.$inferSelect;
 export type Task = typeof tasks.$inferSelect;
 export type NewTask = typeof tasks.$inferInsert;
+export type Change = typeof changes.$inferSelect;
+export type NewChange = typeof changes.$inferInsert;

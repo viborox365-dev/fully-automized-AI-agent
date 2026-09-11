@@ -214,6 +214,77 @@ KAIRA_MODEL_BASE_URL=http://192.168.1.100:11434
 
 Ensure Ollama on the remote machine is configured to accept external connections (set `OLLAMA_HOST=0.0.0.0` when starting Ollama).
 
+## Phase 3: Engineering Agent
+
+Phase 3 adds real engineering capabilities to the Agent Core. The agent can now:
+
+- Inspect workspace files and directory structure
+- Create, modify, and delete files
+- Execute commands (tests, linters, type checkers, builds)
+- Detect available project tooling automatically
+- Track all file changes with before/after content
+- Recover from real failures (syntax errors, test failures, command failures)
+- Verify outcomes against acceptance criteria
+
+### Engineering Workspace Configuration
+
+The engineering workspace is configurable via environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KAIRA_WORKSPACE` | `<project>/workspace` | Root directory for all file operations |
+| `KAIRA_MAX_FILE_SIZE` | `1048576` (1MB) | Max file size for read/write |
+| `KAIRA_MAX_CHANGE_SIZE` | `512000` (512KB) | Max content size per write operation |
+| `KAIRA_ALLOW_DELETE` | `true` | Allow file deletion (set `false` to disable) |
+| `KAIRA_SHELL_ALLOW` | (built-in list) | Comma-separated list of allowed shell commands |
+
+### Engineering Tools
+
+| Tool | Description |
+|------|-------------|
+| `fs_write` | Create or modify a file (tracks before/after content) |
+| `fs_read` | Read a file from the workspace |
+| `fs_list` | List directory contents |
+| `fs_search` | Search file contents |
+| `fs_tree` | Show directory tree structure |
+| `fs_exists` | Check if a file/directory exists |
+| `fs_mkdir` | Create a directory |
+| `fs_delete` | Delete a file (directories not allowed) |
+| `detect_tooling` | Detect available test/lint/typecheck/build commands |
+| `shell_exec` | Execute a command in the workspace |
+
+### Running the Engineering Agent Locally
+
+```powershell
+# Run all Phase 3 engineering tests (uses scripted providers, no Ollama needed)
+npx tsx scripts/test-phase3.ts
+
+# Run the agent against a real engineering objective with real Ollama models
+npx tsx -e "
+  import { createObjective } from './src/agent/engine';
+  import { runAgentCore } from './src/agent/core';
+
+  const { objective } = await createObjective({
+    title: 'Create a Python file called calc.py that adds 5 and 7 and prints the result. Execute it and verify the output is 12.',
+  });
+
+  const result = await runAgentCore(objective.id);
+  console.log('Result:', result.status, result.result ?? result.error);
+"
+```
+
+### Change Tracking
+
+All file modifications are recorded in the `changes` table with:
+- Operation type (create, modify, delete, mkdir)
+- File path
+- Before/after content
+- Model responsible
+- Command/test results
+- Repair attempt number
+
+If the workspace is a Git repository, Git info (branch, changed files, diff stat) is available via `getGitInfo()`. The agent does NOT auto-commit, push, or publish anything.
+
 ## Troubleshooting
 
 ### "Cannot reach Ollama" error

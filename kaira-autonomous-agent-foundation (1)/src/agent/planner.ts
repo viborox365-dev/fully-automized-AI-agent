@@ -22,6 +22,7 @@ import { SAFEGUARD_LIMITS } from "./safeguards";
 
 export type VerificationType =
   | "file_exists"
+  | "file_contains"
   | "output_contains"
   | "exit_code_zero"
   | "command_succeeds";

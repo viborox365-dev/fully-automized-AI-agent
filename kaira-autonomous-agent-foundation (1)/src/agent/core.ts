@@ -260,6 +260,8 @@ export async function runAgentCore(
         db,
         workspaceRoot: ensureWorkspace(),
         runId,
+        objectiveId,
+        taskId,
       });
 
       /* ── OBSERVE ─────────────────────────────────────────── */
@@ -365,6 +367,8 @@ export async function runAgentCore(
             db,
             workspaceRoot: ensureWorkspace(),
             runId,
+            objectiveId,
+            taskId,
           });
           await recordStep(runId, "observation", {
             name: "repair",
@@ -383,6 +387,8 @@ export async function runAgentCore(
             db,
             workspaceRoot: ensureWorkspace(),
             runId,
+            objectiveId,
+            taskId,
           });
 
           // Transition to observing after retry execution

@@ -1,7 +1,10 @@
 import { z } from "zod";
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import path from "node:path";
 import { displayPath, ensureWorkspace, resolveInWorkspace } from "../workspace";
+import { recordChange } from "../changeTracker";
+import { ENGINEERING_LIMITS } from "../safeguards";
 import type { Tool } from "./types";
 
 const MAX_READ_CHARS = 60_000;
@@ -26,15 +29,39 @@ export const fsWrite = {
     },
     required: ["path", "content"],
   },
-  async execute(input: { path: string; content: string }) {
+  async execute(
+    input: { path: string; content: string },
+    ctx: Parameters<Tool["execute"]>[1],
+  ) {
     ensureWorkspace();
+    if (Buffer.byteLength(input.content, "utf8") > ENGINEERING_LIMITS.MAX_CHANGE_SIZE) {
+      return {
+        ok: false,
+        output: `Content too large (${Buffer.byteLength(input.content, "utf8")} bytes). Max change size: ${ENGINEERING_LIMITS.MAX_CHANGE_SIZE} bytes.`,
+      };
+    }
     const abs = resolveInWorkspace(input.path);
+    // Capture before content for change tracking
+    const before = await fsSync.promises
+      .readFile(abs, "utf8")
+      .catch(() => null);
+    const operation = before !== null ? "modify" : "create";
     await fs.mkdir(path.dirname(abs), { recursive: true });
     await fs.writeFile(abs, input.content, "utf8");
+    // Record change
+    await recordChange({
+      runId: ctx.runId,
+      objectiveId: ctx.objectiveId,
+      taskId: ctx.taskId,
+      operation,
+      path: displayPath(abs),
+      beforeContent: before,
+      afterContent: input.content,
+    });
     return {
       ok: true,
       output: `Wrote ${Buffer.byteLength(input.content, "utf8")} bytes to ${displayPath(abs)}`,
-      data: { path: displayPath(abs), bytes: Buffer.byteLength(input.content, "utf8") },
+      data: { path: displayPath(abs), bytes: Buffer.byteLength(input.content, "utf8"), operation },
     };
   },
 } satisfies Tool<{ path: string; content: string }>;
