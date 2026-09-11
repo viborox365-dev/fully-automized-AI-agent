@@ -35,7 +35,8 @@ export function workspaceContext(maxFiles = 20, maxFileContent = 2000): string {
         count++;
         walk(full, depth + 1, prefix + "  ");
       } else {
-        const stat = fs.statSync(full);
+        let stat;
+        try { stat = fs.statSync(full); } catch { continue; }
         lines.push(`${prefix}file ${rel} (${stat.size} bytes)`);
         count++;
         // Include content of small text files
